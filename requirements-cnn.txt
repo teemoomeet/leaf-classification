@@ -1,0 +1,8 @@
+# Flavia 树叶识别 —— 可选：深度学习（迁移学习）路线
+# 仅在需要使用 `--backend cnn` 时才安装：
+#   pip install -r requirements-cnn.txt
+#
+# 如需 GPU 版本，请参考 https://pytorch.org/get-started/locally/ 选择对应命令。
+
+torch>=2.2.0
+torchvision>=0.17.0

@@ -1,0 +1,47 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "flavia-leaf-recognition"
+version = "1.0.0"
+description = "基于 Flavia 数据集的树叶图像批量识别：识别图片中的树叶属于哪一种树"
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "MIT" }
+keywords = ["leaf", "flavia", "image-classification", "plant-recognition", "opencv", "scikit-learn"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Topic :: Scientific/Engineering :: Image Recognition",
+]
+dependencies = [
+    "numpy>=1.26.0",
+    "scipy>=1.11.0",
+    "scikit-learn>=1.4.0",
+    "opencv-python>=4.9.0",
+    "pandas>=2.1.0",
+    "matplotlib>=3.8.0",
+    "Pillow>=10.2.0",
+    "joblib>=1.3.0",
+    "tqdm>=4.66.0",
+]
+
+[project.optional-dependencies]
+cnn = ["torch>=2.2.0", "torchvision>=0.17.0"]
+dev = ["pytest>=8.0.0", "ruff>=0.4.0"]
+
+[project.scripts]
+leaves = "leaves.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["leaves*"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py39"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I"]
+ignore = ["E501"]

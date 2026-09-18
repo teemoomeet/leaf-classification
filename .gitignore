@@ -1,0 +1,41 @@
+# ---------- Python ----------
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+build/
+dist/
+.venv/
+venv/
+env/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# ---------- 数据 / 模型 / 输出（体积大，不入库） ----------
+# 注意用 `data/*` 而不是 `data/`，否则下面的 ! 例外规则不生效
+data/*
+!data/.gitkeep
+models/*.joblib
+models/*.pt
+models/*.pth
+!models/.gitkeep
+outputs/*
+!outputs/.gitkeep
+*.npz
+*.zip
+*.tar.bz2
+
+# ---------- IDE / 系统 ----------
+.idea/
+.vscode/
+*.swp
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ---------- 本地辅助工具 / 旧版本归档 ----------
+tools/
+.legacy_backup/
