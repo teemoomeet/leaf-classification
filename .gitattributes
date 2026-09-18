@@ -22,5 +22,9 @@
 *.yaml text
 *.yml text
 *.json text
-*.ps1 text
-*.sh text
+*.sh text eol=lf
+
+# Windows 脚本必须保持 CRLF：cmd.exe 对 LF 换行的 .bat 处理不正常
+*.ps1 text eol=crlf
+*.bat text eol=crlf
+*.cmd text eol=crlf

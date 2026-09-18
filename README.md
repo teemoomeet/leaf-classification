@@ -360,7 +360,9 @@ D:\leaves\
 │   └── viz.py                  # 可视化（混淆矩阵 / 拼图 / 分布图）
 ├── scripts/
 │   ├── setup_env.ps1           # 一键环境配置（Windows）
-│   └── quickstart.ps1|.sh      # 一键跑通全流程
+│   ├── quickstart.ps1|.sh      # 一键跑通全流程
+│   ├── fix_github_hosts.ps1|.bat  # 修复 github.com 无法访问（网络受限环境）
+│   └── push_via_api.py         # 通过 GitHub API 推送代码（不依赖 github.com 直连）
 ├── tests/
 │   └── test_smoke.py           # 冒烟测试（无需完整数据集）
 ├── samples/                    # 示例叶片图片，可直接用于 predict 演示
@@ -453,6 +455,36 @@ D:\leaves\
 ---
 
 ## 常见问题
+
+<details>
+<summary><b>github.com 打不开、git push 超时怎么办？</b></summary>
+
+部分网络（校园网 / 公司出口）会把 `github.com` 解析到一个被屏蔽的接入 IP
+（常见是 `20.205.243.166`），表现是网页打不开、`git push` 卡死，但
+`api.github.com` 仍然正常。两个办法：
+
+**办法一：修复 hosts（推荐，一次修好后网页和 git 都正常）**
+
+```powershell
+# 双击 scripts\fix_github_hosts.bat（会弹 UAC 确认）
+# 或以管理员身份运行 PowerShell：
+powershell -ExecutionPolicy Bypass -File scripts\fix_github_hosts.ps1
+```
+
+脚本会自动探测一批 GitHub 接入 IP，挑出当前最快且稳定的一个写入 hosts，
+并刷新 DNS。可用 `-Restore` 参数一键还原。
+
+> 这些 IP 的可用性会随时间变化，如果哪天又连不上，重新跑一次脚本即可换 IP。
+
+**办法二：改用 API 推送（不依赖 github.com 直连）**
+
+只要能拿到一个 Personal Access Token，就可以走 `api.github.com` 把代码推上去：
+
+```powershell
+$env:GITHUB_TOKEN = "ghp_xxxxxxxx"
+python scripts/push_via_api.py --repo flavia-leaf-recognition
+```
+</details>
 
 <details>
 <summary><b>下载很慢或者总是失败怎么办？</b></summary>
