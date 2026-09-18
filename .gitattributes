@@ -1,0 +1,26 @@
+# 统一换行符，避免 Windows/Linux 协作时整文件 diff
+* text=auto eol=lf
+
+# 二进制文件不做换行转换
+*.jpg binary
+*.jpeg binary
+*.png binary
+*.gif binary
+*.ico binary
+*.npz binary
+*.joblib binary
+*.pt binary
+*.pth binary
+*.zip binary
+*.tar.bz2 binary
+
+# 明确语言类型（GitHub 语言统计更准确）
+*.py text
+*.md text
+*.txt text
+*.toml text
+*.yaml text
+*.yml text
+*.json text
+*.ps1 text
+*.sh text

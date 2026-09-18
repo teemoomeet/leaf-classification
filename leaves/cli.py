@@ -149,9 +149,20 @@ def _cmd_demo(args: argparse.Namespace) -> int:
     print("\n>>> 步骤 3/4：评估模型")
     evaluate_run(model_path=model_path, split="test")
 
-    print("\n>>> 步骤 4/4：批量识别演示（取测试集前 12 张）")
+    print("\n>>> 步骤 4/4：批量识别演示（从测试集里挑 12 个不同树种）")
     splits = load_split()
-    demo_images = [rec.path for rec in splits["test"][:12]]
+    demo_images: list[str] = []
+    seen_labels: set[int] = set()
+    for rec in splits["test"]:
+        if rec.label in seen_labels:
+            continue
+        seen_labels.add(rec.label)
+        demo_images.append(rec.path)
+        if len(demo_images) >= 12:
+            break
+    if len(demo_images) < 12:  # 类别不足时用剩余样本补齐
+        demo_images = [rec.path for rec in splits["test"][:12]]
+
     frame = recognize(
         demo_images,
         PredictOptions(model_path=model_path, save_visualization=True,

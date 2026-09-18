@@ -1,0 +1,35 @@
+待识别图片 11 张，目录：samples
+--------------------------------------------------------------------
+  1001.jpg                     -> 毛竹      (Phyllostachys edulis)  置信度 0.897
+  1060.jpg                     -> 七叶树     (Aesculus chinensis)  置信度 0.852
+  1268.jpg                     -> 鸡爪槭     (Acer palmatum)  置信度 0.981
+  2001.jpg                     -> 大果冬青    (Ilex macrocarpa)  置信度 0.995
+  2424.jpg                     -> 银杏      (Ginkgo biloba)  置信度 0.952
+  2616.jpg                     -> 罗汉松     (Podocarpus macrophyllus)  置信度 0.994
+  3056.jpg                     -> 日本晚樱    (Prunus serrulata)  置信度 0.212  ⚠ 低置信度
+  3282.jpg                     -> 三角槭     (Acer buergerianum)  置信度 0.964
+  3390.jpg                     -> 荷花木兰    (Magnolia grandiflora)  置信度 0.949
+  3511.jpg                     -> 鹅掌楸     (Liriodendron chinense)  置信度 0.960
+  3566.jpg                     -> 柑橘      (Citrus reticulata)  置信度 0.927
+--------------------------------------------------------------------
+识别完成：成功 11 / 11 张
+
+识别结果分布（Top-1）:
+  毛竹            1 张
+  七叶树           1 张
+  鸡爪槭           1 张
+  大果冬青          1 张
+  银杏            1 张
+  罗汉松           1 张
+  日本晚樱          1 张
+  三角槭           1 张
+  荷花木兰          1 张
+  鹅掌楸           1 张
+  柑橘            1 张
+
+⚠ 有 1 张置信度低于 0.35，可能不属于这 32 种树，建议人工复核（见 CSV 的 low_confidence 列）。
+
+结果已保存：
+  D:\leaves\outputs\predict_samples\predictions.csv
+  D:\leaves\outputs\predict_samples\predictions.json
+  D:\leaves\outputs\predict_samples\vis\recognition_grid.png

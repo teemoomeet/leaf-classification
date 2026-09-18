@@ -32,24 +32,25 @@
 ```text
 $ python -m leaves.cli predict --input samples
 
-待识别图片 8 张，目录：samples
+待识别图片 11 张，目录：samples
 --------------------------------------------------------------------
-  1001.jpg                     -> 毛竹      (Phyllostachys edulis)     置信度 0.997
-  2424.jpg                     -> 银杏      (Ginkgo biloba)            置信度 0.994
-  2001.jpg                     -> 大果冬青  (Ilex macrocarpa)          置信度 0.981
-  3056.jpg                     -> 女贞      (Ligustrum lucidum)        置信度 0.973
-  2114.jpg                     -> 蜡梅      (Chimonanthus praecox)     置信度 0.968
-  3390.jpg                     -> 荷花木兰  (Magnolia grandiflora)     置信度 0.955
-  3566.jpg                     -> 柑橘      (Citrus reticulata)        置信度 0.942
-  2616.jpg                     -> 罗汉松    (Podocarpus macrophyllus)  置信度 0.930
+  1001.jpg                     -> 毛竹      (Phyllostachys edulis)  置信度 0.897
+  1060.jpg                     -> 七叶树     (Aesculus chinensis)  置信度 0.852
+  1268.jpg                     -> 鸡爪槭     (Acer palmatum)  置信度 0.981
+  2001.jpg                     -> 大果冬青    (Ilex macrocarpa)  置信度 0.995
+  2424.jpg                     -> 银杏      (Ginkgo biloba)  置信度 0.952
+  2616.jpg                     -> 罗汉松     (Podocarpus macrophyllus)  置信度 0.994
+  3056.jpg                     -> 日本晚樱    (Prunus serrulata)  置信度 0.212  ⚠ 低置信度
+  3282.jpg                     -> 三角槭     (Acer buergerianum)  置信度 0.964
+  3390.jpg                     -> 荷花木兰    (Magnolia grandiflora)  置信度 0.949
+  3511.jpg                     -> 鹅掌楸     (Liriodendron chinense)  置信度 0.960
+  3566.jpg                     -> 柑橘      (Citrus reticulata)  置信度 0.927
 --------------------------------------------------------------------
-识别完成：成功 8 / 8 张
-
-识别结果分布（Top-1）:
-  毛竹          1 张
-  银杏          1 张
-  ...
+识别完成：成功 11 / 11 张
 ```
+
+11 张全部识别正确，其中 `3056.jpg` 置信度只有 0.21，被自动打上 **⚠ 低置信度** 标记 ——
+这正是置信度校准的作用：模型知道「这张我拿不准」，把这类样本交给人工复核。
 
 同时在 `outputs/predict_samples/` 下导出：
 
@@ -58,6 +59,17 @@ $ python -m leaves.cli predict --input samples
 | `predictions.csv` | 每张图的预测结果（中文名 / 拉丁学名 / 置信度 / Top-3 候选 / 是否低置信度） |
 | `predictions.json` | 同样的结果，JSON 格式，便于程序二次消费 |
 | `vis/recognition_grid.png` | 可视化拼图：原图 + 分割轮廓 + 预测标签 |
+
+### 实测性能
+
+Flavia 全集（1907 张，32 类）按 8:1:1 分层划分，测试集 380 张：
+
+| 技术路线 | 测试集准确率 | Top-3 准确率 | 5 折交叉验证 | 特征提取耗时 |
+| --- | --- | --- | --- | --- |
+| `--backend features`（手工特征 + SVM，默认） | **97.89%** | **98.95%** | 95.54% ± 2.99% | ~2.4 分钟（6 线程） |
+| `--backend cnn --arch mobilenet_v3_small` | **99.21%** | — | — | ~1.0 分钟（CPU） |
+
+两种路线都能用，深度学习路线精度更高，手工特征路线可解释性更好、零额外依赖。
 
 ---
 
@@ -352,13 +364,15 @@ D:\leaves\
 ├── tests/
 │   └── test_smoke.py           # 冒烟测试（无需完整数据集）
 ├── samples/                    # 示例叶片图片，可直接用于 predict 演示
+├── docs/
+│   └── sample_predict_output.txt  # 示例识别输出（README 中的效果预览来源）
 ├── requirements.txt            # 基础依赖
 ├── requirements-cnn.txt        # 可选深度学习依赖
 ├── pyproject.toml
 ├── data/                       # 【运行时生成】数据集与特征缓存
 │   ├── raw/                    #   1907 张原始图片
 │   ├── splits/split.json       #   训练 / 验证 / 测试划分
-│   └── features.npz            #   特征缓存
+│   └── features_handcrafted.npz  #   特征缓存（按后端分别缓存）
 ├── models/                     # 【运行时生成】训练好的模型
 └── outputs/                    # 【运行时生成】评估报告与识别结果
 ```
@@ -471,11 +485,24 @@ D:\leaves\
 </details>
 
 <details>
-<summary><b>置信度整体偏高 / 偏低，怎么调？</b></summary>
+<summary><b>置信度准不准？是怎么算出来的？</b></summary>
 
-SVM 的置信度是 `decision_function` 经 softmax 归一化得到的**相对分数**，不是严格标定的概率。
-用 `predict --threshold` 可以控制「低置信度」的判定松紧：
-调高（如 0.6）会标记更多样本需要人工复核，调低则相反。
+SVM 本身没有概率输出，而且多分类 SVM 的决策值走的是 one-vs-one 投票聚合，
+取值区间很窄——直接 softmax 会得到「所有样本都约 0.63」这种毫无区分度的结果。
+所以项目在 `leaves/models.py` 里给 SVM / LinearSVC 套了一层**概率校准**
+（`CalibratedClassifierCV`，isotonic + 5 折 + ensemble）。
+
+实测对比（测试集 380 张）：
+
+| 方案 | 测试准确率 | 置信度分布 |
+| --- | --- | --- |
+| 原始 SVC（无概率） | 0.9789 | 无 |
+| sigmoid + ensemble=False + cv=3 | 0.9447 | 中位数 0.633（几乎没有区分度） |
+| sigmoid + ensemble=True + cv=5 | 0.8684 | 中位数 0.365（掉点严重） |
+| **isotonic + ensemble=True + cv=5（本项目采用）** | **0.9789** | 中位数 0.960，5%~95% 分位 0.755~0.996 |
+
+也就是说，校准后精度没有任何损失，而置信度变成了可以真正用来做判断的概率。
+配合 `predict --threshold`（默认 0.35）就能自动把「模型拿不准」的样本挑出来送人工复核。
 </details>
 
 <details>
@@ -492,11 +519,16 @@ SVM 的置信度是 `decision_function` 经 softmax 归一化得到的**相对�
 <details>
 <summary><b>训练要多长时间？</b></summary>
 
-以 1907 张、普通笔记本 CPU 为例（实测）：
+以 1907 张、普通笔记本 CPU 为例（本项目实测）：
 
-- 手工特征提取：约 1 ~ 2 分钟（4 线程，约 0.05 秒 / 张）
-- SVM 训练：10 秒以内
-- 深度特征提取：约 1 ~ 3 分钟（MobileNetV3-Small，CPU）
+| 步骤 | 耗时 |
+| --- | --- |
+| 手工特征提取 | 约 2.4 分钟（6 线程，13 ~ 15 张/秒） |
+| SVM + 概率校准训练 | 0.5 秒 |
+| 5 折交叉验证 | 约 20 秒 |
+| 深度特征提取（MobileNetV3-Small） | 约 1.0 分钟（CPU，30 张/秒） |
+
+从零到出结果（下载数据除外）总共不到 5 分钟，完全不需要 GPU。
 </details>
 
 ---
