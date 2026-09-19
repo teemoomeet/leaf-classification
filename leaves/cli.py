@@ -261,7 +261,22 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _ensure_utf8_stdio() -> None:
+    """让 stdout/stderr 以 UTF-8 输出，避免 Windows GBK 控制台遇到 ⚠/中文 等字符崩溃。"""
+    for stream in (sys.stdout, sys.stderr):
+        if stream is None:
+            continue
+        reconfigure = getattr(stream, "reconfigure", None)
+        if reconfigure is None:
+            continue
+        try:
+            reconfigure(encoding="utf-8", errors="replace")
+        except Exception:  # noqa: BLE001
+            pass
+
+
 def main(argv: list[str] | None = None) -> int:
+    _ensure_utf8_stdio()
     parser = build_parser()
     args = parser.parse_args(argv)
     try:
