@@ -217,12 +217,63 @@ python -m leaves.cli predict -i D:\my_leaves --no-recursive --threshold 0.5
 | 参数 | 默认 | 说明 |
 | --- | --- | --- |
 | `-i, --input` | 必填 | 待识别的图片目录或单张图片 |
+| `--model` | 自动 | 模型文件，支持 `.joblib`（训练产物）与 `.pt`（微调产物） |
 | `-o, --output` | `outputs/predict_<目录名>` | 结果输出目录 |
 | `--top-k` | `3` | 输出前 K 个候选 |
 | `--threshold` | `0.35` | 置信度低于该值标记为「低置信度」，提示人工复核 |
+| `--whiten` | `auto` | 白底对齐预处理：先把叶片抠到纯白背景再识别，真实照片推荐开启；`off` 关闭 |
 | `--no-recursive` | 关 | 不递归子目录 |
 | `--no-vis` | 关 | 不导出可视化拼图 |
 | `--max-vis` | `60` | 可视化最多输出多少张 |
+
+### `finetune` — 微调 CNN（真实照片鲁棒性）
+
+冻结特征 + 分类器在「白底扫描图」上接近 99%，但手机实拍照片（多叶簇生、
+背景杂物、色偏、水珠反光）与扫描图分布差异大，直接推理容易误判。
+`finetune` 用**域随机化**合成数据做端到端微调：
+
+* **扫描模式**：原始白底图随机旋转/抖色 —— 保住扫描图上的判别力；
+* **野生模式**：把同物种 1~6 片叶随机贴到随机背景（白纸/灰桌/暗色虚化/
+  绿色灌丛/木纹色），叠加色彩抖动与模糊 —— 模拟真实拍摄条件。
+
+```bash
+python -m leaves.cli finetune                  # CPU 约 25 分钟，输出 models/flavia_ft_mobilenetv3.pt
+python -m leaves.cli predict -i 照片目录 --model models/flavia_ft_mobilenetv3.pt
+```
+
+| 参数 | 默认 | 说明 |
+| --- | --- | --- |
+| `--model` | `models/flavia_ft_mobilenetv3.pt` | 微调模型保存路径 |
+| `--size` | `160` | 输入边长（CPU 友好） |
+| `--epochs` | `12` | 训练轮数 |
+| `--wild-prob` | `0.65` | 野生模式样本占比 |
+| `--batch-size` | `32` | 批大小 |
+| `--seed` | `42` | 随机种子 |
+
+### `match` — 参考图库匹配（识别 32 种之外的植物）
+
+闭集分类只能识别 Flavia 的 32 种树。遇到农作物、园艺植物等**不在表内**
+的物种时，用 `match`：准备一个参考图库目录，**图片文件名即物种名**
+（支持子目录、每类多张），程序提取特征构建参考库，按余弦相似度匹配
+未知图片。不指定 `--input` 时自动做留一法自检，验证参考库区分力。
+
+```bash
+# 构建参考库并自检
+python -m leaves.cli match --library D:/my_refs
+# 批量识别未知图片
+python -m leaves.cli match --library D:/my_refs --input D:/unknown
+```
+
+| 参数 | 默认 | 说明 |
+| --- | --- | --- |
+| `-l, --library` | 必填 | 参考图库目录：文件名即物种名，如「苹果.jpg」「Vitis vinifera.jpg」 |
+| `-i, --input` | 无 | 待识别图片；缺省时对参考库做留一法自检 |
+| `-b, --backend` | `cnn` | 特征后端：`cnn` 区分度最好（需 PyTorch），`features` 无需 GPU |
+| `--threshold` | `0.55` | top1 相似度低于该值提示「可能不在参考库中」 |
+| `--rebuild` | 关 | 参考库加了新图后强制重建缓存 |
+| `--whiten` | `auto` | 白底对齐预处理，真实照片推荐开启 |
+
+开集行为：top1 相似度低于阈值时给出「可能不在参考库中」的提示，而不是硬猜。
 
 ---
 
@@ -274,6 +325,35 @@ python -m leaves.cli predict --input D:\我的树叶照片
 
 > **拍摄建议**：单片叶子放在浅色平整背景（白纸、浅色桌面）上拍摄，尽量让叶片占满画面、
 > 正面朝上、光照均匀。Flavia 数据集里的图像都是这种「白底单片叶」，背景越接近，识别越准。
+
+### 真实场景照片：白底对齐 + 微调模型
+
+`predict` 默认开启 `--whiten auto` 白底对齐：先用「绿色 HSV 掩码 + 亮度阶梯
+阈值」把叶片从复杂背景里抠出来贴到纯白背景上，再送入与训练分布一致的识别
+流程。对白纸/灰桌/暗背景/绿色灌丛里的叶片都稳健。
+
+对多叶簇生的实拍照片（枝条、叶序、竹叶），推荐配合微调模型使用：
+
+```bash
+python -m leaves.cli finetune                                    # 一次性微调
+python -m leaves.cli predict -i D:\实拍照片 --model models/flavia_ft_mobilenetv3.pt
+```
+
+**实测案例**（`samples/scene_photos/`，4 张网络获取的真实场景照）：
+
+| 照片内容 | 肉眼参考 | 冻结特征 SVM | 微调模型 + 多视角 |
+| --- | --- | --- | --- |
+| 暗背景竹叶簇 | 毛竹 | 荷花木兰（误） | 鸡爪槭（误） |
+| 黄绿心形叶 | 紫荆 | 鹅掌楸（误） | 沙兰杨（误） |
+| 白底双叶 | 珊瑚树 / 柑橘 | 日本珊瑚树（合理） | 阔叶十大功劳（低置信 ⚠） |
+| 绿色灌丛轮生枝 | 珊瑚树 / 柑橘 | 三角槭（误） | 柑橘 0.39（合理） |
+
+> **坦率的结论**：扫描图 → 实拍照片的域差是真实存在的。白底单片叶是本项目的
+> 可靠区间（测试集 97.9%~99.2%）；复杂场景照属于「尽力而为 + 明确报告不确定」
+> ——置信度会显著下降并触发 `low_confidence` 提示，请以 top-3 候选与人工复核
+> 为准。要对 32 类之外的植物获得可靠结果，请使用 `match` 自建参考图库路线；
+> 要提升场景照识别，最有效的办法是补充**真实拍摄**的样本继续微调，
+> 而不是依赖合成数据。
 
 ### 想用自己的数据重新训练
 
@@ -343,20 +423,23 @@ D:\leaves\
 ├── leaves/                     # 主程序包
 │   ├── __init__.py
 │   ├── __main__.py             # python -m leaves 入口
-│   ├── cli.py                  # 命令行：download / info / train / evaluate / predict / demo
+│   ├── cli.py                  # 命令行：download / info / train / finetune / evaluate / predict / match / demo
 │   ├── config.py               # 路径与全局配置
 │   ├── species.py              # 32 个树种的名称表 + 文件名→标签映射
 │   ├── registry.py             # 分类器 / 后端 / 骨干网络注册表（纯标准库）
 │   ├── download.py             # 数据集下载（多源自动回退 + 断点续传 + 校验）
 │   ├── dataset.py              # 数据集扫描、分层划分、特征缓存
-│   ├── segmentation.py         # 叶片分割（自适应 Otsu + 形态学 + 最大连通域 + 填洞）
+│   ├── segmentation.py         # 叶片分割（自适应 Otsu + 绿色掩码白底对齐 + 亮度阶梯阈值）
 │   ├── features.py             # 99 维手工特征（形状 / 傅里叶 / LBP / GLCM / 颜色）
 │   ├── deep.py                 # 预训练 CNN 深度特征提取
+│   ├── finetune.py             # 端到端微调（域随机化：扫描模式 + 野生模式合成）
+│   ├── torch_model.py          # 微调 .pt 模型的推理封装
 │   ├── backends.py             # 统一特征后端接口
 │   ├── models.py               # 分类器工厂 + 模型存取 + 置信度计算
 │   ├── train.py                # 训练流水线
 │   ├── evaluate.py             # 评估流水线
-│   ├── predict.py              # 批量识别（核心功能）
+│   ├── predict.py              # 批量识别（核心功能，支持 .joblib 与 .pt 模型）
+│   ├── reference.py            # 参考图库匹配（识别 32 种之外的植物，开集）
 │   └── viz.py                  # 可视化（混淆矩阵 / 拼图 / 分布图）
 ├── scripts/
 │   ├── setup_env.ps1           # 一键环境配置（Windows）
@@ -365,7 +448,7 @@ D:\leaves\
 │   └── push_via_api.py         # 通过 GitHub API 推送代码（不依赖 github.com 直连）
 ├── tests/
 │   └── test_smoke.py           # 冒烟测试（无需完整数据集）
-├── samples/                    # 示例叶片图片，可直接用于 predict 演示
+├── samples/                    # 示例图片：白底扫描叶片 + scene_photos 实拍场景照
 ├── docs/
 │   └── sample_predict_output.txt  # 示例识别输出（README 中的效果预览来源）
 ├── requirements.txt            # 基础依赖

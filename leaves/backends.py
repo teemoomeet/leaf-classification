@@ -31,9 +31,15 @@ def _resize(image: np.ndarray, max_side: int) -> np.ndarray:
     )
 
 
-def load_images(paths: list[Path | str], max_side: int = 384) -> list[np.ndarray]:
-    """读取并等比缩放一批图片（兼容中文路径，失败时用白图占位）。"""
+def load_images(paths: list[Path | str], max_side: int = 384,
+                whiten: bool = False) -> list[np.ndarray]:
+    """读取并等比缩放一批图片（兼容中文路径，失败时用白图占位）。
+
+    :param whiten: ``True`` 时先做白底对齐（抠叶贴白底），适合真实场景照片
+    """
     import cv2
+
+    from .segmentation import leaf_on_white
 
     images: list[np.ndarray] = []
     for path in paths:
@@ -41,7 +47,12 @@ def load_images(paths: list[Path | str], max_side: int = 384) -> list[np.ndarray
         image = cv2.imdecode(data, cv2.IMREAD_COLOR) if data.size else None
         if image is None:
             image = np.full((max_side, max_side, 3), 255, np.uint8)
-        images.append(_resize(image, max_side))
+        image = _resize(image, max_side)
+        if whiten:
+            whitened = leaf_on_white(image)
+            if whitened is not None:
+                image = whitened
+        images.append(image)
     return images
 
 
@@ -106,9 +117,13 @@ def extract_matrix_from_paths(
     workers: int = 4,
     batch_size: int = 32,
     verbose: bool = True,
+    whiten: bool = False,
 ) -> tuple[np.ndarray, list[str], np.ndarray]:
-    """从文件路径直接提取特征矩阵。"""
-    images = load_images(paths, max_side=max_side)
+    """从文件路径直接提取特征矩阵。
+
+    :param whiten: ``True`` 时先做白底对齐预处理（适合真实场景照片）
+    """
+    images = load_images(paths, max_side=max_side, whiten=whiten)
     return extract_matrix(
         images, backend=backend, arch=arch, max_side=max_side,
         workers=workers, batch_size=batch_size, verbose=verbose,

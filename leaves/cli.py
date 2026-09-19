@@ -6,7 +6,8 @@
     python -m leaves.cli info          # 查看数据集概况
     python -m leaves.cli train         # 训练模型
     python -m leaves.cli evaluate      # 评估模型
-    python -m leaves.cli predict -i DIR  # 批量识别树叶图片
+    python -m leaves.cli predict -i DIR  # 批量识别树叶图片（Flavia 32 种树）
+    python -m leaves.cli match -l DIR    # 参考图库匹配：识别任意自定义物种
     python -m leaves.cli demo          # 一键跑通全流程
 """
 
@@ -114,12 +115,50 @@ def _cmd_predict(args: argparse.Namespace) -> int:
         low_confidence=args.threshold,
         save_visualization=not args.no_vis,
         max_visualized=args.max_vis,
+        whiten=args.whiten,
     )
     recognize_folder(
         args.input,
         output_dir=Path(args.output) if args.output else None,
         recursive=not args.no_recursive,
         options=options,
+    )
+    return 0
+
+
+def _cmd_match(args: argparse.Namespace) -> int:
+    from .reference import run_match
+
+    run_match(
+        library_dir=args.library,
+        input_dir=args.input,
+        backend=args.backend,
+        arch=args.arch,
+        top_k=args.top_k,
+        threshold=args.threshold,
+        max_side=args.max_side,
+        workers=args.workers,
+        batch_size=args.batch_size,
+        rebuild=args.rebuild,
+        output_dir=Path(args.output) if args.output else None,
+        save_vis=not args.no_vis,
+        max_vis=args.max_vis,
+        whiten=args.whiten == "auto",
+    )
+    return 0
+
+
+def _cmd_finetune(args: argparse.Namespace) -> int:
+    from .finetune import run as finetune_run
+
+    finetune_run(
+        model_path=Path(args.model) if args.model else None,
+        arch=args.arch,
+        size=args.size,
+        epochs=args.epochs,
+        batch_size=args.batch_size,
+        wild_prob=args.wild_prob,
+        seed=args.seed,
     )
     return 0
 
@@ -184,7 +223,10 @@ def build_parser() -> argparse.ArgumentParser:
             "示例:\n"
             "  python -m leaves.cli download\n"
             "  python -m leaves.cli train --classifier svm\n"
+            "  python -m leaves.cli finetune                     # 微调 CNN，提升真实照片鲁棒性\n"
             "  python -m leaves.cli predict --input D:/my_leaves\n"
+            "  python -m leaves.cli predict --input D:/photos --model models/flavia_ft_mobilenetv3.pt\n"
+            "  python -m leaves.cli match --library D:/my_refs --input D:/unknown\n"
             "  python -m leaves.cli demo\n"
         ),
     )
@@ -244,7 +286,59 @@ def build_parser() -> argparse.ArgumentParser:
     p_pred.add_argument("--no-vis", action="store_true", help="不导出可视化拼图")
     p_pred.add_argument("--max-vis", type=int, default=60, help="可视化最多张数")
     p_pred.add_argument("--no-recursive", action="store_true", help="不递归子目录")
+    p_pred.add_argument("--whiten", choices=["auto", "off"], default="auto",
+                        help="白底对齐预处理：auto=抠叶贴白底后识别（真实照片推荐），off=关闭")
     p_pred.set_defaults(func=_cmd_predict)
+
+    p_match = sub.add_parser(
+        "match",
+        help="参考图库匹配：识别 Flavia 之外的任意物种（每类只需参考图，文件名=物种名）",
+        description=(
+            "用带标签的参考图片（文件名即物种名，如「苹果.jpg」「Vitis vinifera.jpg」）\n"
+            "构建特征参考库，再按特征相似度识别未知叶片。\n"
+            "不指定 --input 时对参考库自身做留一法自检，验证区分力。"
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    p_match.add_argument("--library", "-l", required=True,
+                         help="参考图库目录：图片文件名即物种名，支持子目录与每类多张")
+    p_match.add_argument("--input", "-i", default=None,
+                         help="待识别图片目录或单张文件；缺省时对参考库做留一法自检")
+    p_match.add_argument("--backend", "-b", default="cnn", choices=BACKEND_CHOICES,
+                         help="特征后端：cnn=深度特征（默认，区分度最好），features=手工特征（无需 PyTorch）")
+    p_match.add_argument("--arch", default="mobilenet_v3_small", choices=ARCH_CHOICES)
+    p_match.add_argument("--top-k", type=int, default=3, help="输出前 K 个候选，默认 3")
+    p_match.add_argument("--threshold", type=float, default=0.55,
+                         help="top1 相似度低于该值时提示可能不在参考库中，默认 0.55")
+    p_match.add_argument("--output", "-o", default=None, help="结果输出目录")
+    p_match.add_argument("--max-side", type=int, default=512, help="特征提取时图像最长边")
+    p_match.add_argument("--workers", type=int, default=4)
+    p_match.add_argument("--batch-size", type=int, default=32)
+    p_match.add_argument("--rebuild", action="store_true", help="忽略缓存强制重建参考库（加新参考图后使用）")
+    p_match.add_argument("--no-vis", action="store_true", help="不导出可视化拼图")
+    p_match.add_argument("--max-vis", type=int, default=60)
+    p_match.add_argument("--whiten", choices=["auto", "off"], default="auto",
+                         help="白底对齐预处理：auto=抠叶贴白底（真实照片推荐），off=关闭")
+    p_match.set_defaults(func=_cmd_match)
+
+    p_ft = sub.add_parser(
+        "finetune",
+        help="端到端微调 CNN（域随机化增强），显著提升真实照片的识别鲁棒性",
+        description=(
+            "用「域随机化」合成数据微调 MobileNetV3：扫描模式保住白底扫描图精度，\n"
+            "野生模式（同物种多叶随机贴到随机背景）模拟手机拍摄的真实条件。\n"
+            "训练完成后用 predict --model models/flavia_ft_mobilenetv3.pt 使用。"
+        ),
+    )
+    p_ft.add_argument("--model", default=None, help="模型保存路径，默认 models/flavia_ft_mobilenetv3.pt")
+    p_ft.add_argument("--arch", default="mobilenet_v3_small", choices=ARCH_CHOICES)
+    p_ft.add_argument("--size", type=int, default=160, help="训练/推理输入边长，默认 160")
+    p_ft.add_argument("--epochs", type=int, default=12, help="训练轮数，默认 12")
+    p_ft.add_argument("--batch-size", type=int, default=32)
+    p_ft.add_argument("--wild-prob", type=float, default=0.65,
+                      help="野生模式（合成场景）样本占比，默认 0.65")
+    p_ft.add_argument("--seed", type=int, default=42)
+    p_ft.set_defaults(func=_cmd_finetune)
 
     p_demo = sub.add_parser("demo", help="一键跑通：下载 -> 训练 -> 评估 -> 识别")
     p_demo.add_argument("--source", choices=["auto", "github", "sourceforge"], default="auto")

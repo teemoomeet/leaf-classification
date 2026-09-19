@@ -123,6 +123,102 @@ def segment_leaf(
     )
 
 
+def _fill_small_holes(mask: np.ndarray, max_ratio: float = 0.05) -> np.ndarray:
+    """只填充面积不超过图像 ``max_ratio`` 的小孔洞。
+
+    与 :func:`_fill_holes` 的区别：真实照片里叶片之间的深色缝隙、
+    枝条穿插的大洞是有信息量的轮廓，不应一并填掉。
+    """
+    h, w = mask.shape[:2]
+    flood = mask.copy()
+    canvas = np.zeros((h + 2, w + 2), np.uint8)
+    cv2.floodFill(flood, canvas, (0, 0), 255)
+    holes = cv2.bitwise_not(flood)
+    num, labels, stats, _ = cv2.connectedComponentsWithStats(holes, connectivity=8)
+    keep = np.zeros_like(holes)
+    total = h * w
+    for i in range(1, num):
+        if stats[i, cv2.CC_STAT_AREA] <= max_ratio * total:
+            keep[labels == i] = 255
+    return cv2.bitwise_or(mask, keep)
+
+
+def leaf_on_white(image_bgr: np.ndarray, margin: float = 0.08) -> np.ndarray | None:
+    """把叶片抠出并贴到纯白画布上（真实照片 -> 白底扫描分布的对齐）。
+
+    用「绿色占优」的 HSV 掩码定位叶片：只要背景不是绿色（灰桌面、白纸、
+    土壤、木头……）都稳健，天然免疫「背景比叶片亮还是暗」的极性问题。
+
+    针对「背景也是绿色植被」的复杂场景，做了两级处理：
+
+    1. 只填小洞 —— 叶片间深色缝隙、枝条穿插的大洞保留为背景；
+    2. 全场景绿占比过高时（>0.55，说明前景背景连成一片），改用
+       「绿掩码内亮度阶梯阈值」分离受光主体：自然照片中主体叶片通常
+       比阴影里的背景更亮，从 Otsu 阈值起逐级升高取第一个面积合理的
+       连通域。
+
+    :param margin: 叶片外接矩形四周留白比例
+    :return: 白底 BGR 图像；找不到绿色区域时返回 ``None``（调用方回退原图）
+    """
+    if image_bgr is None or image_bgr.size == 0:
+        raise ValueError("输入图像为空")
+
+    H, W = image_bgr.shape[:2]
+    total = H * W
+    hsv = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2HSV)
+    hue, sat, val = hsv[..., 0], hsv[..., 1], hsv[..., 2]
+    # 绿色 hue 范围放宽到 25~95（含黄绿与深绿），要求一定的饱和度以排除灰白背景
+    green = cv2.inRange(hsv, (25, 40, 30), (95, 255, 255))
+    # 绿色占优的像素（G 分量明显高于 R/B）作为兜底补充，处理偏蓝绿/暗绿叶片
+    b, g, r = image_bgr[..., 0].astype(int), image_bgr[..., 1].astype(int), image_bgr[..., 2].astype(int)
+    dominant = ((g > r + 12) & (g > b + 12) & (sat > 40)).astype(np.uint8) * 255
+    foreground = cv2.bitwise_or(green, dominant)
+
+    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (7, 7))
+    foreground = cv2.morphologyEx(foreground, cv2.MORPH_CLOSE, kernel, iterations=2)
+    foreground = cv2.morphologyEx(foreground, cv2.MORPH_OPEN, kernel, iterations=1)
+
+    if np.count_nonzero(foreground) < 0.02 * total:
+        return None  # 几乎没有绿色前景（可能是非绿植物或异常图），交由调用方回退
+
+    mask = _largest_component(foreground)
+    if not np.count_nonzero(mask):
+        return None
+    mask = _fill_small_holes(mask, 0.05)
+
+    if np.count_nonzero(mask) > 0.55 * total:
+        # 全场景绿色连片：绿掩码内按亮度阶梯分离受光主体
+        gray = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2GRAY)
+        vals = gray[mask > 0]
+        if len(vals):
+            t_otsu, _ = cv2.threshold(vals, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+            candidates = [float(t_otsu)] + [np.percentile(vals, p) for p in (60, 65, 70, 75, 80, 85)]
+            kernel_sub = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (9, 9))
+            for t in candidates:
+                sub = np.where((gray >= t) & (foreground > 0), 255, 0).astype(np.uint8)
+                sub = cv2.morphologyEx(sub, cv2.MORPH_CLOSE, kernel_sub, iterations=2)
+                sub = cv2.morphologyEx(sub, cv2.MORPH_OPEN, kernel, iterations=1)
+                sub = _largest_component(sub)
+                if not np.count_nonzero(sub):
+                    continue
+                sub = _fill_small_holes(sub, 0.03)
+                area = np.count_nonzero(sub)
+                if 0.05 * total < area < 0.55 * total:
+                    mask = sub
+                    break
+
+    x, y, bw, bh = cv2.boundingRect(mask)
+    mx, my = int(bw * margin), int(bh * margin)
+    x0, y0 = max(0, x - mx), max(0, y - my)
+    x1, y1 = min(W, x + bw + mx), min(H, y + bh + my)
+
+    crop = image_bgr[y0:y1, x0:x1].copy()
+    crop_mask = mask[y0:y1, x0:x1]
+    white = np.full_like(crop, 255)
+    white[crop_mask > 0] = crop[crop_mask > 0]
+    return white
+
+
 def resize_keep_ratio(image: np.ndarray, max_side: int = 512) -> np.ndarray:
     """等比例缩小到最长边不超过 ``max_side``（用于加速特征提取）。"""
     if image is None or image.size == 0:
@@ -151,4 +247,7 @@ def binarize_to_outline(mask: np.ndarray, size: int = 256) -> np.ndarray:
     return canvas
 
 
-__all__ = ["SegmentedLeaf", "segment_leaf", "resize_keep_ratio", "binarize_to_outline"]
+__all__ = [
+    "SegmentedLeaf", "segment_leaf", "leaf_on_white",
+    "resize_keep_ratio", "binarize_to_outline",
+]
