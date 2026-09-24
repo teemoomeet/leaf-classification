@@ -386,6 +386,14 @@ frame = recognize_folder("D:/我的树叶照片", options=PredictOptions(top_k=3
 print(frame[["file", "pred_name", "scientific_name", "confidence"]])
 ```
 
+完整示例见 [`examples/analyze_leaves.py`](examples/analyze_leaves.py)——演示「批量识别 +
+Flavia 编号图真值校验」全流程（含判定报告导出）：
+
+```bash
+python examples/analyze_leaves.py --input D:/yezi              # 白底单叶（默认 SVM 模型）
+python examples/analyze_leaves.py --input D:/yezi --finetuned  # 场景实拍照（微调模型）
+```
+
 ---
 
 ## 输出结果说明
@@ -448,6 +456,8 @@ D:\leaves\
 │   └── push_via_api.py         # 通过 GitHub API 推送代码（不依赖 github.com 直连）
 ├── tests/
 │   └── test_smoke.py           # 冒烟测试（无需完整数据集）
+├── examples/
+│   └── analyze_leaves.py       # 示例：批量分析一个文件夹 + Flavia 编号图真值校验
 ├── samples/                    # 示例图片：白底扫描叶片 + scene_photos 实拍场景照
 ├── docs/
 │   └── sample_predict_output.txt  # 示例识别输出（README 中的效果预览来源）

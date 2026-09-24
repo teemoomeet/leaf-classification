@@ -39,3 +39,4 @@ desktop.ini
 # ---------- 本地辅助工具 / 旧版本归档 ----------
 tools/
 .legacy_backup/
+examples/analysis_results/
