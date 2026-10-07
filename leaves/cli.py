@@ -116,6 +116,8 @@ def _cmd_predict(args: argparse.Namespace) -> int:
         save_visualization=not args.no_vis,
         max_visualized=args.max_vis,
         whiten=args.whiten,
+        reject_unknown=args.reject_unknown,
+        ood_path=Path(args.ood) if args.ood else None,
     )
     recognize_folder(
         args.input,
@@ -288,6 +290,10 @@ def build_parser() -> argparse.ArgumentParser:
     p_pred.add_argument("--no-recursive", action="store_true", help="不递归子目录")
     p_pred.add_argument("--whiten", choices=["auto", "off"], default="auto",
                         help="白底对齐预处理：auto=抠叶贴白底后识别（真实照片推荐），off=关闭")
+    p_pred.add_argument("--reject-unknown", action="store_true",
+                        help="开集识别：对不属于已知 32 个树种的图片判定为「未知」而非强猜")
+    p_pred.add_argument("--ood", default=None,
+                        help="OOD 检测器文件路径，缺省用 models/flavia_ood_mahalanobis.joblib")
     p_pred.set_defaults(func=_cmd_predict)
 
     p_match = sub.add_parser(

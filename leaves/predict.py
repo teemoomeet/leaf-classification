@@ -21,6 +21,7 @@ from .backends import extract_matrix
 from .config import OUTPUT_DIR, ensure_dirs
 from .dataset import IMAGE_SUFFIXES
 from .models import load_model, predict_with_confidence
+from .ood import load_ood
 from .segmentation import SegmentedLeaf, leaf_on_white, segment_leaf
 from .species import CHINESE_NAMES, SCIENTIFIC_NAMES
 from .viz import plot_samples
@@ -41,6 +42,12 @@ class PredictOptions:
     #: 白底对齐预处理：``auto`` = 先把叶片抠到纯白背景再识别（适合真实
     #: 场景照片，与 Flavia 白底扫描图的分布对齐）；``off`` = 关闭。
     whiten: str = "auto"
+    #: 开集识别 / 拒识：``True`` 时对不属于已知 32 个树种的图片判定为
+    #: 「未知」，而不是强行给一个高置信度的错误答案。需要 OOD 检测器文件
+    #: （models/flavia_ood_mahalanobis.joblib，由 leaves/train_ood.py 生成）。
+    reject_unknown: bool = False
+    #: OOD 检测器文件路径；缺省用 ``models/flavia_ood_mahalanobis.joblib``
+    ood_path: Path | str | None = None
     #: 内部使用：结果输出目录
     output_dir: Path | None = field(default=None, repr=False)
 
@@ -141,6 +148,20 @@ def recognize(
         model_max_side = int(meta.get("max_side", options.max_side))
     top_k = max(1, int(options.top_k))
 
+    # 开集识别：加载 OOD 检测器（仅拒识开关打开、且非 .pt 端到端模型时生效）
+    ood_detector = None
+    ood_threshold = None
+    if options.reject_unknown and torch_clf is None:
+        loaded_ood = load_ood(options.ood_path)
+        if loaded_ood is not None:
+            ood_detector, ood_threshold = loaded_ood
+        else:
+            print(
+                "⚠ 未找到 OOD 检测器文件，已关闭拒识。"
+                "可运行  python -m leaves.train_ood 生成。",
+                flush=True,
+            )
+
     rows: list[dict] = []
     loaded: list[np.ndarray] = []
     valid_indices: list[int] = []
@@ -185,6 +206,7 @@ def recognize(
 
     if loaded:
         if torch_clf is not None:
+            ood_score = None  # 端到端 .pt 模型暂不支持拒识
             # 多视角融合：主视角（已按 --whiten 预处理）+ 峰值局部窗，
             # 逐类取各视角最大概率 —— 多叶簇生时显著提升鲁棒性。
             all_views: list[np.ndarray] = []
@@ -228,6 +250,12 @@ def recognize(
             pred, confidence, top_labels, top_scores = predict_with_confidence(
                 pipeline, X, top_k=top_k
             )
+            if ood_detector is not None:
+                from .ood import ood_scores
+
+                ood_score = ood_scores(ood_detector, X)
+            else:
+                ood_score = None
         for j, row_idx in enumerate(valid_indices):
             label = int(pred[j])
             record = rows[row_idx]
@@ -236,11 +264,30 @@ def recognize(
             record["scientific_name"] = SCIENTIFIC_NAMES[label]
             record["confidence"] = float(confidence[j])
             record["low_confidence"] = bool(confidence[j] < options.low_confidence)
+            # 开集识别：OOD 分数超阈值时判为「未知」，覆盖预测结果
+            if ood_score is not None:
+                score = float(ood_score[j])
+                record["ood_score"] = score
+                if score > ood_threshold:
+                    record["pred_label"] = None
+                    record["pred_name"] = "未知（非训练物种）"
+                    record["scientific_name"] = "-"
+                    record["low_confidence"] = True
+                    record["rejected_unknown"] = True
+                else:
+                    record["rejected_unknown"] = False
             for rank in range(top_labels.shape[1]):
                 rank_label = int(top_labels[j, rank])
                 record[f"top{rank + 1}_name"] = CHINESE_NAMES[rank_label]
                 record[f"top{rank + 1}_score"] = float(top_scores[j, rank])
             if verbose:
+                if record.get("rejected_unknown"):
+                    flag = f"  ⚠ 拒识（OOD 分数 {record['ood_score']:.1f} > {ood_threshold:.1f}）"
+                    print(
+                        f"  {record['file']:<28} -> 未知（非训练物种）{flag}",
+                        flush=True,
+                    )
+                    continue
                 flag = "  ⚠ 低置信度" if record["low_confidence"] else ""
                 print(
                     f"  {record['file']:<28} -> {record['pred_name']:<8}"
